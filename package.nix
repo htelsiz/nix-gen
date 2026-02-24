@@ -17,7 +17,7 @@ writeShellApplication {
     description = "Label NixOS generations with human-readable names visible in systemd-boot";
     homepage = "https://github.com/htelsiz/nix-gen";
     license = lib.licenses.mit;
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
     mainProgram = "nix-gen";
   };
 }
