@@ -125,7 +125,12 @@ case "${1:-}" in
     echo "  nix-gen current            Show current generation"
     ;;
   *)
-    label=$(sanitize "$1"); shift
-    rebuild switch "$label" "$@"
+    if [ $# -gt 1 ]; then
+      echo "Error: unexpected arguments after label: ${*:2}" >&2
+      echo "Usage: nix-gen <label>" >&2
+      exit 1
+    fi
+    label=$(sanitize "$1")
+    rebuild switch "$label"
     ;;
 esac
