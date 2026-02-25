@@ -1,98 +1,145 @@
+<div align="center">
+
 # nix-gen
 
-Label NixOS generations with human-readable names visible in systemd-boot.
+**Name your NixOS generations. See them in the boot menu.**
+
+[![Nix Flake](https://img.shields.io/badge/nix-flake-blue?logo=nixos&logoColor=white)](https://nixos.wiki/wiki/Flakes)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+</div>
+
+---
 
 ## The Problem
 
-NixOS generations are numbered sequentially -- gen 42, gen 43, gen 44.
-These numbers mean nothing when you are staring at a boot menu trying to
-remember which generation had the working NVIDIA driver, which one added
-Jellyfin, and which one broke audio.
+NixOS generations are numbered: gen 42, gen 43, gen 44. These numbers mean nothing when you're staring at systemd-boot trying to remember which generation had the working NVIDIA driver, which one added Jellyfin, and which one broke audio.
 
-nix-gen lets you name them. Instead of "NixOS Generation 42", your boot
-entry reads "NixOS -- add-jellyfin". You pick the right one instantly.
+**nix-gen fixes this.** Instead of:
+
+```
+NixOS Generation 42
+NixOS Generation 43
+NixOS Generation 44
+```
+
+You see:
+
+```
+NixOS — fix-nvidia-wayland
+NixOS — add-jellyfin
+NixOS — broke-audio-revert-me
+```
+
+One command. No impure flags. Works with `nh` and `nixos-rebuild`.
 
 ## Quick Start
 
-Add nix-gen to your flake inputs:
+### 1. Add to your flake
 
 ```nix
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    nix-gen.url = "github:htelsiz/nix-gen";
-    nix-gen.inputs.nixpkgs.follows = "nixpkgs";
+    nix-gen = {
+      url = "github:htelsiz/nix-gen";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { nixpkgs, nix-gen, self, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      specialArgs = { inherit self; };  # required: module reads .nixos-label via self
+      modules = [
+        nix-gen.nixosModules.default
+        { programs.nix-gen.enable = true; }
+        ./configuration.nix
+      ];
+    };
   };
 }
 ```
 
-Pass `self` through `specialArgs` so the module can read `.nixos-label`
-at evaluation time:
+### 2. Rebuild with a label
 
-```nix
-nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-  specialArgs = { inherit self; };
-  modules = [
-    nix-gen.nixosModules.default
-    ./configuration.nix
-  ];
-};
-```
-
-Enable the module:
-
-```nix
-{ programs.nix-gen.enable = true; }
-```
-
-Rebuild with a label:
-
-```
+```bash
 nix-gen add-jellyfin
 ```
 
+That's it. The label is baked into the generation and shows up in systemd-boot.
+
 ## Commands
 
-| Command                  | Description                          |
-|--------------------------|--------------------------------------|
-| `nix-gen <label>`        | Rebuild and switch with given label  |
-| `nix-gen test <label>`   | Test rebuild (does not persist)      |
-| `nix-gen boot <label>`   | Apply label on next boot only        |
-| `nix-gen list`           | List generations with labels         |
-| `nix-gen current`        | Show the active generation and label |
-| `nix-gen help`           | Print usage summary                  |
+```
+nix-gen <label>            Rebuild + switch with label
+nix-gen test <label>       Test rebuild (doesn't persist across reboot)
+nix-gen boot <label>       Apply label on next boot only
+nix-gen list               List all generations with their labels
+nix-gen current            Show active generation and label
+```
 
-Labels must not look like file paths. Spaces are replaced with hyphens.
-Each label must be unique across all existing generations.
+### Example: `nix-gen list`
+
+```
+  NixOS Generations
+  ─────────────────────────────────────────────────────────────────
+    41  2026-01-15 14:22:30  initial-install
+    42  2026-01-18 09:15:42  add-nvidia-drivers
+    43  2026-01-20 16:30:11  add-jellyfin
+  → 44  2026-01-22 11:45:03  fix-audio-pipewire
+```
+
+The `→` marks your current generation.
 
 ## How It Works
 
-nix-gen uses a `.nixos-label` file and pure evaluation to bake labels
-into NixOS generations:
+```
+                     ┌──────────────────────────────┐
+  nix-gen <label>    │ 1. Write label to            │
+  ─────────────────► │    .nixos-label               │
+                     │ 2. git add + commit           │
+                     │ 3. nh os switch (or           │
+                     │    nixos-rebuild switch)       │
+                     └──────────┬───────────────────┘
+                                │
+                     ┌──────────▼───────────────────┐
+  NixOS module       │ builtins.readFile             │
+  (pure eval)        │   .nixos-label                │
+                     │         ↓                     │
+                     │ system.nixos.label = <label>  │
+                     └──────────┬───────────────────┘
+                                │
+                     ┌──────────▼───────────────────┐
+  systemd-boot       │ Boot entry title:             │
+                     │ "NixOS — <label>"             │
+                     └──────────────────────────────┘
+```
 
-1. `nix-gen <label>` writes the label to `.nixos-label` in your flake root.
-2. It stages the file with `git add` (flakes only see tracked or staged files).
-3. It commits the label file so the tree is clean for `nh` or `nixos-rebuild`.
-4. The NixOS module reads `.nixos-label` with `builtins.readFile` at eval time.
-5. It sets `system.nixos.label`, which bakes the label into the generation.
-6. systemd-boot picks up the label and displays it in the boot menu.
+**Key design decisions:**
 
-No impure evaluation. No `--impure` flag. The label is part of the flake
-inputs just like any other tracked file.
+- **Pure evaluation** — the label file is committed to git, so flakes see it without `--impure`
+- **Works with `nh`** — detects `nh` in PATH and uses it; falls back to `nixos-rebuild`
+- **Unique labels enforced** — can't reuse a label across generations
+- **Reads `$NH_FLAKE` / `$FLAKE`** — respects your existing flake path config (defaults to `/etc/nixos`)
 
 ## Standalone CLI
 
-You can run nix-gen without installing the NixOS module. The CLI works on
-its own for listing and inspecting generations:
+List and inspect generations without installing the NixOS module:
 
-```
+```bash
 nix run github:htelsiz/nix-gen -- list
 nix run github:htelsiz/nix-gen -- current
 ```
 
-To use it for labeled rebuilds, the NixOS module must be imported so that
-`system.nixos.label` is set from `.nixos-label`.
+For labeled rebuilds, the NixOS module must be imported so `system.nixos.label` is set from `.nixos-label`.
+
+## Constraints
+
+- Labels can't look like file paths (`/foo` or `./bar` are rejected)
+- Spaces are auto-replaced with hyphens
+- Characters limited to `a-zA-Z0-9:_.-`
+- Each label must be unique across all existing generations
 
 ## License
 
-MIT -- see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
