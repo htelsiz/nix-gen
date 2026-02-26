@@ -33,9 +33,15 @@ check_unique() {
 
 write_label() {
   local label="$1"
-  echo "$label" > "$FLAKE/.nixos-label"
-  git -C "$FLAKE" add .nixos-label
-  git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
+  if [ -w "$FLAKE" ]; then
+    echo "$label" > "$FLAKE/.nixos-label"
+    git -C "$FLAKE" add .nixos-label
+    git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
+  else
+    echo "$label" | sudo tee "$FLAKE/.nixos-label" > /dev/null
+    sudo git -C "$FLAKE" add .nixos-label
+    sudo git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
+  fi
 }
 
 rebuild() {
