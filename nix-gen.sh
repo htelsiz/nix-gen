@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FLAKE="${NH_FLAKE:-${FLAKE:-/etc/nixos}}"
+# ── Flake path detection ────────────────────────────────────────────────
+# Priority: NIX_GEN_FLAKE > NH_FLAKE > FLAKE > git root > /etc/nixos
+
+detect_flake() {
+  for var in NIX_GEN_FLAKE NH_FLAKE FLAKE; do
+    if [ -n "${!var:-}" ]; then echo "${!var}"; return; fi
+  done
+  local git_root
+  git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$git_root" ] && [ -f "$git_root/flake.nix" ]; then
+    echo "$git_root"
+    return
+  fi
+  echo "/etc/nixos"
+}
+
+FLAKE=$(detect_flake)
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -33,13 +49,18 @@ check_unique() {
 
 write_label() {
   local label="$1"
+  if [ ! -d "$FLAKE" ]; then
+    echo "Error: flake directory does not exist: $FLAKE" >&2
+    echo "Set \$FLAKE or \$NH_FLAKE, or run from your config directory." >&2
+    exit 1
+  fi
   if [ -w "$FLAKE" ]; then
     echo "$label" > "$FLAKE/.nixos-label"
-    git -C "$FLAKE" add .nixos-label
+    git -C "$FLAKE" add -f .nixos-label
     git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
   else
     echo "$label" | sudo tee "$FLAKE/.nixos-label" > /dev/null
-    sudo git -C "$FLAKE" add .nixos-label
+    sudo git -C "$FLAKE" add -f .nixos-label
     sudo git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
   fi
 }
@@ -129,6 +150,9 @@ case "${1:-}" in
     echo "  nix-gen boot <label>       Apply on next boot only"
     echo "  nix-gen list               List generations with labels"
     echo "  nix-gen current            Show current generation"
+    echo ""
+    echo "Flake path: $FLAKE"
+    echo "Override:   \$NIX_GEN_FLAKE, \$NH_FLAKE, or \$FLAKE"
     ;;
   *)
     if [ $# -gt 1 ]; then
