@@ -2,18 +2,17 @@
 set -euo pipefail
 
 # ── Flake path detection ────────────────────────────────────────────────
-# Priority: NIX_GEN_FLAKE > NH_FLAKE > FLAKE > git root > /etc/nixos
+# Walk upward from $PWD looking for flake.nix. Env vars override.
 
 detect_flake() {
   for var in NIX_GEN_FLAKE NH_FLAKE FLAKE; do
     if [ -n "${!var:-}" ]; then echo "${!var}"; return; fi
   done
-  local git_root
-  git_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "$git_root" ] && [ -f "$git_root/flake.nix" ]; then
-    echo "$git_root"
-    return
-  fi
+  local dir="$PWD"
+  while [ "$dir" != "/" ]; do
+    if [ -f "$dir/flake.nix" ]; then echo "$dir"; return; fi
+    dir=$(dirname "$dir")
+  done
   echo "/etc/nixos"
 }
 
@@ -50,19 +49,18 @@ check_unique() {
 write_label() {
   local label="$1"
   if [ ! -d "$FLAKE" ]; then
-    echo "Error: flake directory does not exist: $FLAKE" >&2
-    echo "Set \$FLAKE or \$NH_FLAKE, or run from your config directory." >&2
+    echo "Error: flake directory not found: $FLAKE" >&2
+    echo "Run from your config directory or set \$FLAKE." >&2
     exit 1
   fi
-  if [ -w "$FLAKE" ]; then
-    echo "$label" > "$FLAKE/.nixos-label"
-    git -C "$FLAKE" add -f .nixos-label
-    git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
-  else
-    echo "$label" | sudo tee "$FLAKE/.nixos-label" > /dev/null
-    sudo git -C "$FLAKE" add -f .nixos-label
-    sudo git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
+  if [ ! -w "$FLAKE" ]; then
+    echo "Error: no write permission to $FLAKE" >&2
+    echo "Fix: sudo chown -R \$(whoami) $FLAKE" >&2
+    exit 1
   fi
+  echo "$label" > "$FLAKE/.nixos-label"
+  git -C "$FLAKE" add -f .nixos-label
+  git -C "$FLAKE" commit -m "label: $label" --quiet 2>/dev/null || true
 }
 
 rebuild() {
@@ -75,7 +73,7 @@ rebuild() {
   if command -v nh &>/dev/null; then
     nh os "$action" "$FLAKE" "$@"
   else
-    sudo nixos-rebuild "$action" --flake "$FLAKE" "$@"
+    nixos-rebuild "$action" --flake "$FLAKE" "$@"
   fi
 }
 
@@ -151,8 +149,7 @@ case "${1:-}" in
     echo "  nix-gen list               List generations with labels"
     echo "  nix-gen current            Show current generation"
     echo ""
-    echo "Flake path: $FLAKE"
-    echo "Override:   \$NIX_GEN_FLAKE, \$NH_FLAKE, or \$FLAKE"
+    echo "Flake: $FLAKE"
     ;;
   *)
     if [ $# -gt 1 ]; then

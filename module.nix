@@ -12,7 +12,7 @@ let
   hasLabel = self != null && builtins.pathExists labelFile;
   fileLabel =
     if hasLabel then
-      builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile labelFile)
+      lib.strings.trim (builtins.readFile labelFile)
     else
       "";
 
@@ -21,17 +21,10 @@ in
 {
   options.programs.nix-gen = {
     enable = lib.mkEnableOption "nix-gen, labeled NixOS generation rebuilds";
-
-    flake = lib.mkOption {
-      type = lib.types.str;
-      default = "/etc/nixos";
-      description = "Path to the editable flake source directory.";
-    };
   };
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ nix-gen ];
-    environment.sessionVariables.NIX_GEN_FLAKE = cfg.flake;
     system.nixos.label = lib.mkIf (fileLabel != "") fileLabel;
   };
 }
